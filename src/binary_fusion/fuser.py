@@ -4,7 +4,7 @@ import subprocess
 import sys
 import zlib
 
-from .analyzer import check_compatible, print_elf_info
+from .analyzer import check_compatible, print_elf_info, get_section_permissions, format_rwx, parse_elf
 
 # the trailer sits at the end of the fused binary so the stub
 # can find where the host and guest binaries are embedded
@@ -13,6 +13,11 @@ from .analyzer import check_compatible, print_elf_info
 TRAILER_FMT = "<QQQQI4s"
 TRAILER_SIZE = struct.calcsize(TRAILER_FMT)  # 40
 FLAG_COMPRESSED = 1
+ALIGN = 8  # align embedded binaries to 8-byte boundaries for efficient access
+
+
+def align_up(offset, alignment):
+    return (offset + alignment - 1) & ~(alignment - 1)
 
 
 def compile_stub(stub_dir, with_zlib=False):
@@ -46,6 +51,12 @@ def fuse(host_path, guest_path, output_path, compress=False, verbose=False):
         print_elf_info(host_path)
         print_elf_info(guest_path)
 
+    # capture section permissions before fusion for verification
+    host_bin = parse_elf(host_path)
+    guest_bin = parse_elf(guest_path)
+    host_perms = get_section_permissions(host_bin)
+    guest_perms = get_section_permissions(guest_bin)
+
     with open(host_path, "rb") as f:
         host_data = f.read()
     with open(guest_path, "rb") as f:
@@ -53,6 +64,13 @@ def fuse(host_path, guest_path, output_path, compress=False, verbose=False):
 
     print(f"Host: {host_path} ({len(host_data)} bytes)")
     print(f"Guest: {guest_path} ({len(guest_data)} bytes)")
+
+    if verbose:
+        print(f"\nSection permissions preserved:")
+        for name, p in host_perms.items():
+            print(f"  host  {name:20s} [{format_rwx(p)}]")
+        for name, p in guest_perms.items():
+            print(f"  guest {name:20s} [{format_rwx(p)}]")
 
     if compress:
         orig = len(guest_data)
@@ -65,10 +83,15 @@ def fuse(host_path, guest_path, output_path, compress=False, verbose=False):
     with open(stub_path, "rb") as f:
         stub_data = f.read()
 
-    # the fused binary is just: stub + host + guest + trailer + trailer_size
-    # the stub reads itself at runtime and uses the trailer to find the embedded binaries
-    host_offset = len(stub_data)
-    guest_offset = host_offset + len(host_data)
+    # layout: stub + padding + host + padding + guest + trailer + trailer_size
+    # align embedded binaries to 8-byte boundaries for efficient read access
+    host_offset = align_up(len(stub_data), ALIGN)
+    host_pad = host_offset - len(stub_data)
+
+    guest_offset = align_up(host_offset + len(host_data), ALIGN)
+    guest_pad = guest_offset - (host_offset + len(host_data))
+
+    total_pad = host_pad + guest_pad
 
     flags = FLAG_COMPRESSED if compress else 0
     trailer = struct.pack(TRAILER_FMT,
@@ -77,10 +100,14 @@ def fuse(host_path, guest_path, output_path, compress=False, verbose=False):
                           flags, b"FUSE")
     trailer += struct.pack("<Q", TRAILER_SIZE)
 
-    fused = stub_data + host_data + guest_data + trailer
+    fused = (stub_data + b'\x00' * host_pad +
+             host_data + b'\x00' * guest_pad +
+             guest_data + trailer)
 
     with open(output_path, "wb") as f:
         f.write(fused)
     os.chmod(output_path, 0o755)
 
+    overhead = total_pad + len(trailer)
+    print(f"Layout: {ALIGN}-byte aligned, {total_pad} bytes padding, {overhead} bytes total overhead")
     print(f"Output: {output_path} ({len(fused)} bytes)")

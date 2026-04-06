@@ -1,3 +1,5 @@
+import warnings
+
 import lief
 import sys
 
@@ -46,6 +48,31 @@ def check_compatible(host_path, guest_path):
     return host, guest
 
 
+def get_section_permissions(binary):
+    """Extract rwx permission flags for each section from ELF segment mappings."""
+    perms = {}
+    for seg in binary.segments:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            try:
+                is_load = seg.type == lief.ELF.Segment.TYPE.LOAD
+            except Exception:
+                continue
+        if not is_load:
+            continue
+        flags = seg.flags
+        r = bool(flags & lief.ELF.Segment.FLAGS.R)
+        w = bool(flags & lief.ELF.Segment.FLAGS.W)
+        x = bool(flags & lief.ELF.Segment.FLAGS.X)
+        for sec in seg.sections:
+            perms[sec.name] = {"r": r, "w": w, "x": x}
+    return perms
+
+
+def format_rwx(p):
+    return f"{'r' if p['r'] else '-'}{'w' if p['w'] else '-'}{'x' if p['x'] else '-'}"
+
+
 def print_elf_info(path):
     binary = parse_elf(path)
     h = binary.header
@@ -65,12 +92,16 @@ def print_elf_info(path):
         print(f"  Interpreter: none")
         print(f"  Linking:     static")
 
+    perms = get_section_permissions(binary)
+
     # show sections that actually have content
     print()
     for s in binary.sections:
         if s.size > 0:
-            # some section types are just ints that lief doesnt recognize
-            stype = s.type
-            name = stype.name if hasattr(stype, 'name') else hex(int(stype))
-            print(f"  {s.name:20s}  {name:16s}  {s.size:>8} bytes  @ 0x{s.offset:x}")
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                stype = s.type
+                name = stype.name if hasattr(stype, 'name') else hex(int(stype))
+            rwx = format_rwx(perms[s.name]) if s.name in perms else "---"
+            print(f"  {s.name:20s}  {name:16s}  {s.size:>8} bytes  @ 0x{s.offset:x}  [{rwx}]")
     print()

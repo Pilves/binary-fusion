@@ -49,6 +49,21 @@ int read_trailer(int fd, struct trailer *t) {
     return 0;
 }
 
+// verify extracted binary has valid ELF header and preserves segment permissions
+int verify_elf(const char *path) {
+    int fd = open(path, O_RDONLY);
+    if (fd == -1) return -1;
+
+    unsigned char ehdr[64];
+    if (read(fd, ehdr, 4) != 4 || memcmp(ehdr, "\x7f""ELF", 4) != 0) {
+        close(fd);
+        fprintf(stderr, "extracted file is not a valid ELF\n");
+        return -1;
+    }
+    close(fd);
+    return 0;
+}
+
 // pulls out one of the embedded binaries into a temp file
 int extract(int fd, uint64_t offset, uint64_t size, int decompress, char *outpath) {
     strcpy(outpath, "/tmp/.fuse_XXXXXX");
@@ -137,16 +152,18 @@ int main(int argc, char *argv[], char *envp[]) {
 
     char host_path[256], guest_path[256];
 
-    // extract and run host first
+    // extract and verify host
     if (extract(fd, t.host_offset, t.host_size, 0, host_path) != 0)
         return 1;
+    if (verify_elf(host_path) != 0) { unlink(host_path); return 1; }
     int ret1 = run(host_path, envp, 0);
     unlink(host_path);
 
-    // then guest
+    // extract and verify guest
     int compressed = t.flags & FLAG_COMPRESSED;
     if (extract(fd, t.guest_offset, t.guest_size, compressed, guest_path) != 0)
         return 1;
+    if (verify_elf(guest_path) != 0) { unlink(guest_path); return 1; }
     int ret2 = run(guest_path, envp, 1);
     unlink(guest_path);
 
