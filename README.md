@@ -30,9 +30,8 @@ The trailer contains: host offset, host size, guest offset, guest size, flags (c
 Needs: Python 3.12+, gcc, uv
 
 ```bash
-uv venv
-uv pip install -e ".[dev]"
-bash tests/fixtures/build_fixtures.sh
+uv sync
+bash demo/build_fixtures.sh
 ```
 
 The stub compiles automatically on first run.
@@ -58,12 +57,6 @@ Host stdout goes to stdout, guest stdout is redirected to stderr in the stub:
 ./fused_jules > host.txt 2> guest.txt
 ```
 
-## Testing
-
-```bash
-.venv/bin/pytest tests/ -v
-```
-
 ## Project structure
 
 ```
@@ -73,10 +66,8 @@ src/binary_fusion/
   fuser.py      - fusion logic, trailer building, stub compilation
 stub/
   stub.c        - C loader that extracts and runs both embedded programs
-tests/
-  test_analyzer.py
-  test_fusion.py
-  fixtures/     - jules.c, vincent.c and their compiled binaries
+demo/           - sample inputs (jules.c, vincent.c, etc.) and build script
+notes/          - task spec, testing criteria, video script
 ```
 
 ## ELF format notes

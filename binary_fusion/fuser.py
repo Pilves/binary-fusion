@@ -78,7 +78,7 @@ def fuse(host_path, guest_path, output_path, compress=False, verbose=False):
         print(f"Compressed guest: {orig} -> {len(guest_data)} bytes")
 
     # find and compile the stub (the C program that actually runs both binaries)
-    stub_dir = os.path.join(os.path.dirname(__file__), "..", "..", "stub")
+    stub_dir = os.path.join(os.path.dirname(__file__), "..", "stub")
     stub_path = compile_stub(stub_dir, with_zlib=compress)
     with open(stub_path, "rb") as f:
         stub_data = f.read()
